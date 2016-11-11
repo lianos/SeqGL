@@ -1,5 +1,3 @@
-
-
 #' Function for finding motifs associate with each group
 #'
 #' @param res.dir Directory with group lasso results
@@ -8,13 +6,15 @@
 #' @param min.examples Minimum examples for a group to be considered
 #' @param test.classes Group classes to be considered
 #' @param org Organism from which data was derived
-#' @details The motifs for all groups will be found under folder group_motifs. The summary of all 
+#' @param known.motifs If you have your own HOMER motif file to use as a database, provide
+#'   that here, otherwise we use the default \code{-mset vertebrates} known.motifs file.
+#' @details The motifs for all groups will be found under folder group_motifs. The summary of all
 #' groups and motifs will be written to group_motifs.html
 #' @return GRanges object of enriched regions
 #' @export
-
 group.motifs <- function (res.dir, dictionary.file,
-	no.cores=1, min.examples = 25, test.classes=c(1, -1), org='hg19') {
+	no.cores=1, min.examples = 25, test.classes=c(1, -1), org='hg19',
+  known.motifs=NULL) {
 
 	# Test to check if the homer tool is in path
 	test <- system ("findMotifsGenome.pl", ignore.stdout=TRUE, ignore.stderr=TRUE, intern=FALSE)
@@ -22,11 +22,15 @@ group.motifs <- function (res.dir, dictionary.file,
 		stop ("Homer motif finding tool not found. Please install and add to your path.")
 	}
 
+  if (is.character(known.motifs) && !file.exists(known.motifs)) {
+    stop("known.motifs file cannot be found: ", known.motifs)
+  }
+
 	# Load all the group lasso data and results
-    train.test.data <- readRDS (sprintf ("%s/train_test_data.Rds", res.dir))
-    clustering.results <- readRDS (sprintf ("%s/clustering_results.Rds", res.dir))
+  train.test.data <- readRDS (sprintf ("%s/train_test_data.Rds", res.dir))
+  clustering.results <- readRDS (sprintf ("%s/clustering_results.Rds", res.dir))
 	load (sprintf ("%s/group_lasso_results.Rdata", res.dir))
-	
+
 
 	# Create output directory
 	group.motif.dir <- sprintf ("%s/group_motifs/", res.dir)
@@ -37,7 +41,7 @@ group.motifs <- function (res.dir, dictionary.file,
 
 	group.motif <- function (group) {
 		show (group)
-		
+
 		# Create directory for results
 		homer.dir <- sprintf ("%s/Group%d", group.motif.dir, group)
 		dir.create (homer.dir)
@@ -45,20 +49,26 @@ group.motifs <- function (res.dir, dictionary.file,
 		# Determine high scoring locations
 		bed.file <- sprintf ("%s/seqs.bed", homer.dir)
 		examples <- which (group.members[,group] == 1)
-		res <- extract.high.scoring.locations (group, group.scores[group, 'class'], 
-			train.test.data$train.seqs[examples], train.test.data$train.regions[examples], 
+		res <- extract.high.scoring.locations (group, group.scores[group, 'class'],
+			train.test.data$train.seqs[examples], train.test.data$train.regions[examples],
 			group.lasso.results$w[clustering.results$groups == group],
 			dictionary.file, bed.file)
 
 		# Run homer
 		homer.cmd <- sprintf ("findMotifsGenome.pl %s %s %s", bed.file, org, homer.dir)
-		homer.cmd <- sprintf ("%s -p 1 -size given -len 6,8,10,12 -noknown -mset vertebrates", homer.cmd)
+		homer.cmd <- sprintf ("%s -p 1 -size given -len 6,8,10,12 -noknown", homer.cmd)
+    if (is.null(known.motifs)) {
+      homer.cmd <- paste(homer.cmd, '-mset vertebrates')
+    } else {
+      homer.cmd <- paste(homer.cmd, '-mknown', known.motifs)
+    }
+
 		system (homer.cmd)
 	}
 
 	res <- mclapply (test.groups, group.motif, mc.cores=no.cores, mc.preschedule=FALSE)
 
-	# Create report 
+	# Create report
 	lines <- c("<HTML><HEAD><TITLE>Motifs</TITLE></HEAD>",
 		"<BODY>",
 		"<TABLE border=\"1\" cellpading=\"0\" cellspacing=\"0\">",
@@ -81,7 +91,7 @@ group.motifs <- function (res.dir, dictionary.file,
 
 	test.class <- group.scores[test.groups, 'class']
 	inds <- sort (group.scores[test.groups, 'score'], index.return=TRUE, decreasing=TRUE)$ix
-	cols <- cbind ("<TR>", 
+	cols <- cbind ("<TR>",
 		sprintf ("<TD>&nbsp;<a href=\"group_motifs/Group%d/homerResults.html\">Group%d</a>&nbsp;</TD>", test.groups[inds], test.groups[inds]),
 		sprintf ("<TD>%d</TD>", test.class[inds]),
 		sprintf ("<TD>%.2f</TD>", group.scores[test.groups[inds], 'score']),
@@ -91,5 +101,5 @@ group.motifs <- function (res.dir, dictionary.file,
 	lines <- c(lines, apply (cols, 1, paste, collapse=" "))
 	lines <- c(lines, "</TABLE></BODY></HTML>")
 	writeLines (lines, sprintf ("%s/group_motifs.html", res.dir))
-    invisible (res)
+  invisible (res)
 }
